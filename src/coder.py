@@ -77,23 +77,47 @@ Highlight: Indicate(mob), Circumscribe(mob, color=YELLOW), Flash(mob), Surroundi
 Math: always MathTex(r"...") — never Text() for equations or formulas.
 Annotations: always smaller than the mobject they annotate (scale 0.5–0.7).
 
+TIMING — THE MOST IMPORTANT RULE:
+• NEVER add self.wait() between animations unless the animation brief explicitly calls for one.
+• Back-to-back self.play() calls have ZERO gap — this is correct and what we want.
+• Sequential element reveals: self.play(LaggedStart(*[Create(x) for x in items], lag_ratio=0.3), run_time=N)
+  — NOT a loop of separate self.play() calls, which adds gaps.
+• Simultaneous animations: self.play(FadeIn(a), Create(b), run_time=N) — runs both at once.
+• ALWAYS pass run_time= to every self.play() — use the value from the brief or the beat duration.
+
 ANIMATION REFERENCE:
-• self.play(FadeIn(mob, shift=UP*0.3))   — smooth entrance
-• self.play(Write(mob))                  — for text/equations
-• self.play(Create(mob))                 — for shapes/lines
-• self.play(Indicate(mob, color=YELLOW)) — pulse highlight
-• self.play(FadeOut(mob1, mob2, ...))    — fade multiple at once
-• self.wait(n)                           — pause (keep short, 2–5s)
-• For arrow pointing at something: Arrow(start=UP*1.5 + mob.get_top(), end=mob.get_top(), color=YELLOW)
-  — always derive arrow endpoints from mobject methods (.get_top(), .get_center(), etc.), never raw coords.
+• self.play(FadeIn(mob, shift=UP*0.2), run_time=1.0)
+• self.play(Write(mob), run_time=1.5)
+• self.play(Create(mob), run_time=1.0)
+• self.play(Indicate(mob, color=YELLOW, scale_factor=1.2), run_time=0.8)
+• self.play(Circumscribe(mob, color=YELLOW), run_time=0.8)
+• self.play(Flash(mob, color=YELLOW, flash_radius=0.5), run_time=0.5)
+• self.play(FadeOut(mob1, mob2, shift=DOWN*0.1), run_time=1.0)
+• self.wait(n)  — ONLY where explicitly required
+• Arrow(start=mob.get_top()+UP*0.5, end=mob.get_top(), color=YELLOW, buff=0)
+  — always derive endpoints from mobject methods, never raw coordinates.
 """
 
 
-def generate(scene: dict, previous_error: str | None = None, previous_code: str | None = None) -> str:
-    """Call GPT-4o to generate Manim Python code for the given scene JSON."""
+def generate(
+    scene: dict,
+    animation_brief: str = "",
+    previous_error: str | None = None,
+    previous_code: str | None = None,
+) -> str:
+    """Call GPT-4o to generate Manim Python code from a concrete animation brief."""
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-    user_message = f"Generate a complete Manim Python file for this scene:\n\n{json.dumps(scene, indent=2)}"
+    if animation_brief:
+        user_message = (
+            "Implement this animation brief as a complete Manim Python file.\n\n"
+            "ANIMATION BRIEF (follow this exactly — sizes, colors, positions, run_time values):\n"
+            + animation_brief
+            + "\n\nSCENE JSON (for scene_id and class name only):\n"
+            + json.dumps({"scene_id": scene.get("scene_id"), "goal": scene.get("goal", "")}, indent=2)
+        )
+    else:
+        user_message = f"Generate a complete Manim Python file for this scene:\n\n{json.dumps(scene, indent=2)}"
 
     if previous_error and previous_code:
         user_message += f"""

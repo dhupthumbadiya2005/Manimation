@@ -1,18 +1,18 @@
-"""Orchestrates coder -> lint -> render with up to 3 total attempts."""
+"""Orchestrates animator -> coder -> lint -> render with up to 3 total attempts."""
 import json
 import shutil
 from pathlib import Path
 
 from loguru import logger
 
-from src import coder, lint, renderer
+from src import animator, coder, lint, renderer
 
 MAX_ATTEMPTS = 3
 
 
 def run(scene: dict, run_dir: Path) -> dict:
     """
-    Execute the coder-lint-render loop for one scene.
+    Execute the animator-coder-lint-render loop for one scene.
     All artifacts are written to run_dir.
     Returns a result dict (also written as result.json).
     """
@@ -21,14 +21,27 @@ def run(scene: dict, run_dir: Path) -> dict:
     scene_id = scene.get("scene_id", "unknown")
     scene_class = f"Scene{scene_id}"
 
+    # Generate the animation brief once — shared across all retry attempts.
+    # The brief is the concrete visual spec; retry attempts only fix the code.
+    logger.info(f"Scene {scene_id} — generating animation brief")
+    brief = animator.generate(scene)
+    brief_path = run_dir / "animation_brief.txt"
+    brief_path.write_text(brief)
+    logger.info(f"Brief saved -> {brief_path}")
+
     last_error: str | None = None
     last_code: str | None = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         logger.info(f"Scene {scene_id} — attempt {attempt}/{MAX_ATTEMPTS}")
 
-        # --- Generate code ---
-        code = coder.generate(scene, previous_error=last_error, previous_code=last_code)
+        # --- Generate code from the brief ---
+        code = coder.generate(
+            scene,
+            animation_brief=brief,
+            previous_error=last_error,
+            previous_code=last_code,
+        )
         last_code = code
 
         code_path = run_dir / f"attempt_{attempt}.py"
