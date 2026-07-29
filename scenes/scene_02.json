@@ -1,0 +1,13 @@
+{
+  "scene_id": 2,
+  "goal": "Show the quadratic formula as a LaTeX equation with a label above it",
+  "mobjects": [
+    {"id": "label", "type": "Text", "content": "Quadratic Formula", "cell": "top-center"},
+    {"id": "formula", "type": "MathTex", "content": "x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}", "cell": "mid-center"}
+  ],
+  "beats": [
+    {"action": "FadeIn", "target": "label", "duration": 0.8, "note": "show label first"},
+    {"action": "Write", "target": "formula", "duration": 2.0, "note": "write the equation"}
+  ],
+  "max_simultaneous_mobjects": 2
+}

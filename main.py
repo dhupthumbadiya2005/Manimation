@@ -1,14 +1,5 @@
-from manim import *
-
-
-class Math(Scene):
-    def construct(self):
-        eq = MathTex(r"\int_0^1 x^2 dx")
-        self.play(Write(eq))
-        self.wait()
-
+"""Root-level entrypoint: python main.py --scene scenes/scene_01.json --run-id test1"""
+from src.main import main
 
 if __name__ == "__main__":
-    Math().render()
-
-
+    main()

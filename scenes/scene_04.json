@@ -1,0 +1,17 @@
+{
+  "scene_id": 4,
+  "goal": "Show four mobjects simultaneously: a title, two labeled equations, and a summary box — stressing the max simultaneous limit",
+  "mobjects": [
+    {"id": "title", "type": "Text", "content": "Euler's Identity", "cell": "top-center"},
+    {"id": "eq1", "type": "MathTex", "content": "e^{i\\pi} + 1 = 0", "cell": "mid-left"},
+    {"id": "eq2", "type": "MathTex", "content": "e^{i\\theta} = \\cos\\theta + i\\sin\\theta", "cell": "mid-right"},
+    {"id": "box", "type": "Rectangle", "content": "highlight rectangle around eq1", "cell": "mid-left"}
+  ],
+  "beats": [
+    {"action": "FadeIn", "target": "title", "duration": 0.8, "note": "show title"},
+    {"action": "Write", "target": "eq1", "duration": 1.5, "note": "write first equation"},
+    {"action": "Write", "target": "eq2", "duration": 1.5, "note": "write second equation"},
+    {"action": "Create", "target": "box", "duration": 0.8, "note": "draw highlight box around eq1"}
+  ],
+  "max_simultaneous_mobjects": 4
+}

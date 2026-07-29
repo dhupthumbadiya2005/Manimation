@@ -1,0 +1,7 @@
+manim==0.20.1
+anthropic==0.120.2
+numpy==2.5.1
+loguru==0.7.3
+python-dotenv==1.2.2
+rich==15.0.0
+pydantic==2.13.4

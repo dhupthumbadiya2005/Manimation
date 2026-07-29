@@ -1,0 +1,11 @@
+{
+  "scene_id": 1,
+  "goal": "Display a simple title card with the text 'Manim AI' centered on screen",
+  "mobjects": [
+    {"id": "title", "type": "Text", "content": "Manim AI", "cell": "mid-center"}
+  ],
+  "beats": [
+    {"action": "FadeIn", "target": "title", "duration": 1.0, "note": "fade in the title"}
+  ],
+  "max_simultaneous_mobjects": 1
+}
