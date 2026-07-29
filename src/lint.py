@@ -49,7 +49,8 @@ def check(code: str) -> LintResult:
                 if isinstance(func.value, ast.Name) and func.value.id == "time":
                     return LintResult(passed=False, message="time.sleep() is not allowed")
 
-    # 5. Exactly one Scene subclass
+    # 5. Exactly one Scene subclass (Scene, ThreeDScene, or MovingCameraScene)
+    _SCENE_BASES = {"Scene", "ThreeDScene", "MovingCameraScene", "ZoomedScene"}
     scene_classes = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
@@ -59,7 +60,7 @@ def check(code: str) -> LintResult:
                     base_name = base.id
                 elif isinstance(base, ast.Attribute):
                     base_name = base.attr
-                if base_name == "Scene":
+                if base_name in _SCENE_BASES:
                     scene_classes.append(node.name)
 
     if len(scene_classes) == 0:

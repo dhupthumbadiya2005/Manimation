@@ -1,27 +1,51 @@
-"""
-CLI entrypoint.
+"""3-Stage Manim AI Pipeline orchestrator.
 
-Phase 1 mode:  python main.py --scene scenes/scene_01.json --run-id test1
-Phase 2 mode:  python main.py --topic "explain binary search" --run-id run1
+Usage:
+  python main.py --topic "explain binary search" --run-id run1
+  python main.py --topic "bubble sort" --run-id run2 --quality qh
 """
 import argparse
-import json
+import ast
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
 from loguru import logger
 
-from src import plan_schema, planner, retry_loop
+load_dotenv()
+
+from src import code_gen, lint, planner, renderer
+from src.config import config
 
 
 # ---------------------------------------------------------------------------
-# helpers
+# Helpers
 # ---------------------------------------------------------------------------
+
+def _extract_scene_class(code: str) -> str:
+    """Parse the Python source and return the first Scene subclass name found."""
+    _SCENE_BASES = {"Scene", "ThreeDScene", "MovingCameraScene", "ZoomedScene"}
+    try:
+        tree = ast.parse(code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for base in node.bases:
+                    name = ""
+                    if isinstance(base, ast.Name):
+                        name = base.id
+                    elif isinstance(base, ast.Attribute):
+                        name = base.attr
+                    if name in _SCENE_BASES:
+                        return node.name
+    except SyntaxError:
+        pass
+    return "MainScene"
+
 
 def _video_duration(mp4_path: str) -> float:
-    """Return duration in seconds of an mp4 file using ffprobe."""
     try:
         result = subprocess.run(
             [
@@ -30,9 +54,7 @@ def _video_duration(mp4_path: str) -> float:
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 mp4_path,
             ],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            capture_output=True, text=True, timeout=10,
         )
         return float(result.stdout.strip())
     except Exception:
@@ -40,124 +62,141 @@ def _video_duration(mp4_path: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 single-scene mode (unchanged logic)
+# Stage 3 wrapper: render with auto-repair loop
 # ---------------------------------------------------------------------------
 
-def _run_single_scene(scene_file: str, run_id: str) -> None:
-    scene_path = Path(scene_file)
-    if not scene_path.exists():
-        logger.error(f"Scene file not found: {scene_path}")
-        sys.exit(1)
+def _render_with_retry(
+    code: str,
+    run_dir: Path,
+    markdown_plan: str,
+) -> dict:
+    """Run lint → render, retrying up to config.max_retries times.
 
-    scene = json.loads(scene_path.read_text())
-    scene_id = scene.get("scene_id", "unknown")
-    run_dir = Path("runs") / run_id / f"scene_{scene_id}"
-    logger.info(f"Run directory: {run_dir}")
+    Each failure feeds the error + bad code back to the code generator.
+    Returns a result dict: {success, attempts, mp4, final_error}.
+    """
+    last_error: str | None = None
+    last_code = code
+    max_attempts = config.max_retries
 
-    result = retry_loop.run(scene, run_dir)
+    for attempt in range(1, max_attempts + 1):
+        logger.info(f"Attempt {attempt}/{max_attempts}")
 
-    if result["success"]:
-        print(f"\n✓ SUCCESS — scene {scene_id} rendered in {result['attempts']} attempt(s)")
-        print(f"  Video: {result['mp4']}")
-        print(f"  Result: {run_dir / 'result.json'}")
-        sys.exit(0)
-    else:
-        print(f"\n✗ FAILED — scene {scene_id} after {result['attempts']} attempt(s)")
-        print(f"  Result: {run_dir / 'result.json'}")
-        sys.exit(1)
+        # Save attempt file
+        code_path = run_dir / f"attempt_{attempt}.py"
+        code_path.write_text(last_code)
+        logger.info(f"  Saved code → {code_path}")
+
+        # Static lint
+        lint_result = lint.check(last_code)
+        if not lint_result.passed:
+            msg = f"LINT: {lint_result.message}"
+            logger.warning(f"  {msg}")
+            (run_dir / f"attempt_{attempt}_stderr.log").write_text(msg)
+            if attempt < max_attempts:
+                logger.info("  Regenerating code with lint error …")
+                last_code = code_gen.generate(
+                    markdown_plan,
+                    previous_error=msg,
+                    previous_code=last_code,
+                )
+            last_error = msg
+            continue
+
+        # Render
+        work_dir = run_dir / f"work_{attempt}"
+        work_dir.mkdir(exist_ok=True)
+        work_code = work_dir / f"attempt_{attempt}.py"
+        shutil.copy2(code_path, work_code)
+
+        scene_class = _extract_scene_class(last_code)
+        logger.info(f"  Rendering class '{scene_class}' …")
+
+        render_result = renderer.run(work_code, scene_class, run_dir)
+        (run_dir / f"attempt_{attempt}_stdout.log").write_text(render_result.stdout)
+        (run_dir / f"attempt_{attempt}_stderr.log").write_text(render_result.stderr)
+
+        if render_result.success:
+            logger.success(f"  Rendered successfully on attempt {attempt}")
+            return {"success": True, "attempts": attempt, "mp4": str(render_result.mp4_path)}
+
+        last_error = render_result.stderr
+        logger.warning(f"  Render failed:\n{last_error[-600:]}")
+
+        if attempt < max_attempts:
+            logger.info("  Regenerating code with render error …")
+            last_code = code_gen.generate(
+                markdown_plan,
+                previous_error=last_error,
+                previous_code=last_code,
+            )
+
+    return {"success": False, "attempts": max_attempts, "final_error": last_error}
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 planner mode
+# Main pipeline
 # ---------------------------------------------------------------------------
 
-def _run_topic(topic: str, run_id: str) -> None:
+def _run_pipeline(topic: str, run_id: str, quality: str | None = None) -> None:
+    if quality:
+        config.render_quality = quality
+
     run_dir = Path("runs") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     wall_start = time.time()
+    print(f"\nTopic : {topic}")
+    print(f"Run ID: {run_id}")
+    print(f"Model : {config.llm_provider} / "
+          f"{config.gemini_model if config.llm_provider == 'gemini' else config.openai_model}")
+    print(f"Quality: {config.render_quality}\n")
 
-    # 1. Generate plan (with one retry on validation failure)
-    logger.info(f"Generating plan for topic: {topic!r}")
-    gen_start = time.time()
-    plan = planner.generate(topic)
-    gen_elapsed = time.time() - gen_start
-    logger.info(f"Plan generated in {gen_elapsed:.1f}s")
+    # ── Stage 1: Plan ────────────────────────────────────────────────────────
+    print("Stage 1 — Generating scene plan …")
+    t0 = time.time()
+    markdown_plan = planner.generate(topic)
+    plan_elapsed = time.time() - t0
 
-    valid, error = plan_schema.validate(plan)
-    if not valid:
-        logger.warning(f"Plan validation failed: {error}")
-        logger.info("Retrying planner with validation error appended …")
-        plan = planner.generate(topic, previous_error=error, previous_plan=plan)
-        valid, error = plan_schema.validate(plan)
-        if not valid:
-            logger.error(f"Plan still invalid after retry: {error}")
-            print(f"\n✗ FAILED — planner produced an invalid plan: {error}")
-            sys.exit(1)
+    plan_path = run_dir / "plan.md"
+    plan_path.write_text(markdown_plan)
+    print(f"  Plan saved → {plan_path}  ({plan_elapsed:.1f}s)\n")
+    print("─" * 60)
+    print(markdown_plan[:800] + ("…" if len(markdown_plan) > 800 else ""))
+    print("─" * 60 + "\n")
 
-    logger.info("Plan validated successfully")
+    # ── Stage 2: Generate code ───────────────────────────────────────────────
+    print("Stage 2 — Generating Manim code …")
+    t0 = time.time()
+    manim_code = code_gen.generate(markdown_plan)
+    code_elapsed = time.time() - t0
+    print(f"  Code generated ({code_elapsed:.1f}s, {len(manim_code)} chars)\n")
 
-    # 2. Save plan.json BEFORE any rendering
-    plan_path = run_dir / "plan.json"
-    plan_path.write_text(json.dumps(plan, indent=2))
-    logger.info(f"Plan saved -> {plan_path}")
+    # ── Stage 3: Render with auto-repair ────────────────────────────────────
+    print("Stage 3 — Rendering …")
+    t0 = time.time()
+    result = _render_with_retry(manim_code, run_dir, markdown_plan)
+    render_elapsed = time.time() - t0
 
-    scenes = plan["scenes"]
-    target_dur = plan.get("target_duration_seconds", plan_schema.DEFAULT_TARGET_DURATION)
-    total_hint = sum(plan_schema.scene_duration_hint(s) for s in scenes)
-
-    print(f"\nPlan: {len(scenes)} scenes | target {target_dur:.0f}s | hint total {total_hint:.0f}s")
-    print(f"  Saved: {plan_path}\n")
-
-    # 3. Render each scene — inject topic so coder has full context
-    scene_results: list[dict] = []
-    render_start = time.time()
-    for scene in scenes:
-        sid = scene["scene_id"]
-        scene["_topic"] = topic  # pass topic through to coder without polluting plan.json
-        scene_run_dir = run_dir / f"scene_{sid}"
-        logger.info(f"Rendering scene {sid}/{len(scenes)}: {scene.get('title', '')[:60]}")
-        result = retry_loop.run(scene, scene_run_dir)
-        result["scene_id"] = sid
-        result["duration_hint"] = plan_schema.scene_duration_hint(scene)
-        scene_results.append(result)
-
-    render_elapsed = time.time() - render_start
     wall_elapsed = time.time() - wall_start
 
-    # 4. Report results
-    total_actual = 0.0
-    successes = [r for r in scene_results if r["success"]]
-    failures = [r for r in scene_results if not r["success"]]
+    # ── Report ───────────────────────────────────────────────────────────────
+    print("\n" + "═" * 60)
+    if result["success"]:
+        mp4 = result["mp4"]
+        duration = _video_duration(mp4)
+        print(f"  SUCCESS  after {result['attempts']} attempt(s)")
+        print(f"  Video  : {mp4}")
+        print(f"  Length : {duration:.1f}s")
+    else:
+        print(f"  FAILED  after {result['attempts']} attempt(s)")
+        print(f"  Error  : {str(result.get('final_error', ''))[:300]}")
 
-    print(f"\n{'─' * 64}")
-    print(f"{'Scene':<8} {'Title':<35} {'Hint':>6} {'Actual':>7} {'Attempts':>9}")
-    print(f"{'─' * 64}")
-    for r in scene_results:
-        sid = r["scene_id"]
-        scene = next(s for s in scenes if s["scene_id"] == sid)
-        title_short = (scene.get("title") or "")[:34]
-        hint = r["duration_hint"]
-        actual = 0.0
-        if r["success"] and r.get("mp4"):
-            actual = _video_duration(r["mp4"])
-            total_actual += actual
-        status = "✓" if r["success"] else "✗"
-        print(
-            f"{status} {sid:<6} {title_short:<35} "
-            f"{hint:>5.0f}s {actual:>6.1f}s {r['attempts']:>6}/{retry_loop.MAX_ATTEMPTS}"
-        )
-    print(f"{'─' * 64}")
-    print(f"\nResults : {len(successes)}/{len(scenes)} scenes rendered successfully")
-    print(f"Timing  : hint {total_hint:.0f}s | mp4 actual {total_actual:.1f}s")
-    print(f"Wall    : plan gen {gen_elapsed:.1f}s | render {render_elapsed:.1f}s "
-          f"| total {wall_elapsed:.1f}s")
+    print(f"\n  Timing : plan {plan_elapsed:.1f}s | code {code_elapsed:.1f}s"
+          f" | render {render_elapsed:.1f}s | total {wall_elapsed:.1f}s")
+    print("═" * 60 + "\n")
 
-    if failures:
-        print(f"\nFailed scenes: {[r['scene_id'] for r in failures]}")
-        print("Inspect plan.json and individual result.json files for details.")
-
-    sys.exit(0 if not failures else 1)
+    sys.exit(0 if result["success"] else 1)
 
 
 # ---------------------------------------------------------------------------
@@ -165,17 +204,17 @@ def _run_topic(topic: str, run_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manim AI pipeline")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--scene", help="Path to a scene JSON file (Phase 1 mode)")
-    group.add_argument("--topic", help="Topic string to plan and render (Phase 2 mode)")
+    parser = argparse.ArgumentParser(description="Manim AI — 3-Stage Pipeline")
+    parser.add_argument("--topic", required=True, help="Topic or algorithm to animate")
     parser.add_argument("--run-id", required=True, help="Unique run identifier")
+    parser.add_argument(
+        "--quality",
+        choices=["ql", "qm", "qh", "qk"],
+        default=None,
+        help="Render quality: ql=480p (fast), qm=720p, qh=1080p, qk=4K (default: ql)",
+    )
     args = parser.parse_args()
-
-    if args.scene:
-        _run_single_scene(args.scene, args.run_id)
-    else:
-        _run_topic(args.topic, args.run_id)
+    _run_pipeline(args.topic, args.run_id, args.quality)
 
 
 if __name__ == "__main__":

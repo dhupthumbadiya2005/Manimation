@@ -5,12 +5,20 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.config import config
 
-TIMEOUT_SECONDS = 300          # 1080p60 renders take longer than 480p
-QUALITY_FLAG = "-qh"           # 1080p60 — matches 3Blue1Brown output quality
-QUALITY_DIR = "1080p60"        # Manim output subdirectory for -qh
+
+TIMEOUT_SECONDS = 300
 # LaTeX on macOS lives here (TeX Live / MacTeX); not on default subprocess PATH
 LATEX_BIN = "/Library/TeX/texbin"
+
+# Map quality flag → Manim output subdirectory name
+_QUALITY_DIRS = {
+    "ql": "480p15",
+    "qm": "720p30",
+    "qh": "1080p60",
+    "qk": "2160p60",
+}
 
 
 @dataclass
@@ -22,17 +30,21 @@ class RenderResult:
 
 
 def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
-    """
-    Run `manim -ql <code_path> <scene_class>`.
+    """Run `manim -q<level> <code_path> <scene_class>`.
+
+    Quality is read from config.render_quality ("ql" by default = 480p15).
     Returns RenderResult; on success, mp4_path points to the rendered file.
     """
+    quality_flag = f"-{config.render_quality}"
+    quality_dir = _QUALITY_DIRS.get(config.render_quality, config.render_quality)
+
     env = os.environ.copy()
     if LATEX_BIN not in env.get("PATH", ""):
         env["PATH"] = LATEX_BIN + ":" + env.get("PATH", "")
 
     try:
         proc = subprocess.run(
-            ["manim", QUALITY_FLAG, code_path.name, scene_class],
+            ["manim", quality_flag, code_path.name, scene_class],
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
@@ -53,7 +65,7 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
     mp4_path = None
     if success:
         stem = code_path.stem
-        pattern = code_path.parent / "media" / "videos" / stem / QUALITY_DIR / f"{scene_class}.mp4"
+        pattern = code_path.parent / "media" / "videos" / stem / quality_dir / f"{scene_class}.mp4"
         if pattern.exists():
             dest = output_dir / "final.mp4"
             shutil.copy2(pattern, dest)
