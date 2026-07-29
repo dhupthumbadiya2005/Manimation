@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-TIMEOUT_SECONDS = 90
+TIMEOUT_SECONDS = 300          # 1080p60 renders take longer than 480p
+QUALITY_FLAG = "-qh"           # 1080p60 — matches 3Blue1Brown output quality
+QUALITY_DIR = "1080p60"        # Manim output subdirectory for -qh
 # LaTeX on macOS lives here (TeX Live / MacTeX); not on default subprocess PATH
 LATEX_BIN = "/Library/TeX/texbin"
 
@@ -30,7 +32,7 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
 
     try:
         proc = subprocess.run(
-            ["manim", "-ql", code_path.name, scene_class],
+            ["manim", QUALITY_FLAG, code_path.name, scene_class],
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
@@ -50,9 +52,8 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
 
     mp4_path = None
     if success:
-        # Manim writes to media/videos/<stem>/480p15/<ClassName>.mp4 by default (-ql = 480p)
         stem = code_path.stem
-        pattern = code_path.parent / "media" / "videos" / stem / "480p15" / f"{scene_class}.mp4"
+        pattern = code_path.parent / "media" / "videos" / stem / QUALITY_DIR / f"{scene_class}.mp4"
         if pattern.exists():
             dest = output_dir / "final.mp4"
             shutil.copy2(pattern, dest)
