@@ -238,10 +238,8 @@ _WORKED_EXAMPLE = {
     ],
 }
 
-# Budget totals: 24+28+28+28+26+28+26+24 = 212s  ±15% of 240s target: [204,276] ✓
-# Beat sums per scene (verified against ±20% of budget):
-#   S1 25.4/24=105.8% ✓  S2 27.0/28=96.4% ✓  S3 27.4/28=97.9% ✓  S4 27.9/28=99.6% ✓
-#   S5 24.0/26=92.3% ✓  S6 25.4/28=90.7% ✓  S7 23.5/26=90.4% ✓  S8 22.5/24=93.8% ✓
+# Beat sums: S1=25.4  S2=27.0  S3=27.4  S4=27.9  S5=23.8  S6=24.4  S7=23.5  S8=22.5
+# Total: 201.9s ≤ 300s hard cap ✓
 
 _SYSTEM_PROMPT = (
     "You are the director of a 3Blue1Brown-style educational video. "
@@ -253,50 +251,51 @@ _SYSTEM_PROMPT = (
     "══════════════════════════════════════════\n"
     "• Scenes are SHOTS in one continuous video — each flows naturally into the next.\n"
     "• Every scene delivers exactly one insight, statable in one sentence.\n"
-    "• Animation beats (FadeIn/Create/Indicate): 0.8–1.5s — snappy visual changes.\n"
-    "• Narrator Wait beats: 5–12s — narrator explains while the visual is held static.\n"
-    "• Transition Wait beats: 1–3s — brief pause at a visual state change.\n"
+    "• SCENE DURATION comes entirely from beat durations — write beats that feel right "
+    "for the content, and the scene length emerges naturally. Do NOT pad beats to hit "
+    "a target; do NOT under-write beats and leave empty time.\n"
+    "• Animation beats (FadeIn/Create/Write/Indicate): 0.8–1.5s — snappy visual changes.\n"
+    "• Narrator Wait beats: 5–12s — narrator speaks while visual is held. Each Wait's "
+    "note should describe what the narrator says during that pause.\n"
+    "• Transition pauses: 1–3s — brief beat between visual state changes.\n"
     "• The LAST beats of every scene must FadeOut ALL mobjects introduced in that scene.\n"
-    "• Scenes 20–35s each, 8–14 beats per scene.\n"
-    "• No standalone title-card scenes. Start with content immediately.\n"
-    "• Build complexity scene by scene — each scene adds one new idea on top of the last.\n\n"
+    "• Aim for 20–35s per scene (judge by summing your beat durations before writing).\n"
+    "• No standalone title-card scenes. Dive into content from scene 1.\n"
+    "• Build concepts scene by scene — each adds one new idea.\n\n"
 
     "══════════════════════════════════════════\n"
     "HARD RULES\n"
     "══════════════════════════════════════════\n"
-    "1. target_duration_seconds defaults to "
-    + str(int(DEFAULT_TARGET_DURATION))
-    + "s. Hard cap: "
+    "1. Total beats across ALL scenes must not exceed "
     + str(MAX_TOTAL_DURATION_SECONDS)
+    + "s. Aim for around "
+    + str(int(DEFAULT_TARGET_DURATION))
     + "s.\n"
-    "2. Sum of scene duration_budget_seconds must be within ±15% of target_duration_seconds.\n"
-    "3. Each scene's beats[].duration values must sum within ±20% of that scene's budget.\n"
-    "4. All cell values must be from: " + str(GRID_CELLS) + "\n"
-    "5. Every non-Wait beat's target must be a mobject id defined in that scene.\n"
-    "6. At most max_simultaneous_mobjects mobjects on screen at once (track this yourself).\n"
-    "7. scene_id starts at 1 and increments by 1 with no gaps.\n"
-    "8. Describe mobjects as WHAT to show, not how to code them.\n"
-    "9. Before returning: sum all duration_budget_seconds; if off by >15%, redistribute.\n\n"
+    "2. All cell values must be from: " + str(GRID_CELLS) + "\n"
+    "3. Every non-Wait beat's target must be a mobject id defined in that scene.\n"
+    "4. At most max_simultaneous_mobjects mobjects on screen at once (track this yourself).\n"
+    "5. scene_id starts at 1 and increments by 1 with no gaps.\n"
+    "6. Describe mobjects as WHAT to show, not how to code them.\n\n"
 
     "══════════════════════════════════════════\n"
     "SCHEMA\n"
     "══════════════════════════════════════════\n"
     '{\n'
-    '  "target_duration_seconds": <float>,\n'
+    '  "target_duration_seconds": <float — your total video target, ≤300>,\n'
     '  "scenes": [{\n'
     '    "scene_id": <int>,\n'
     '    "goal": "<one sentence — what insight does this scene deliver?>",\n'
-    '    "duration_budget_seconds": <float>,\n'
     '    "mobjects": [{"id":"<str>","type":"<str>","content":"<description>","cell":"<grid cell>"}],\n'
-    '    "beats": [{"action":"<FadeIn|Create|Write|Indicate|Circumscribe|FadeOut|Wait|…>",\n'
+    '    "beats": [{"action":"<FadeIn|Create|Write|Indicate|FadeOut|Wait|…>",\n'
     '               "target":"<mobject id>","duration":<float>,"note":"<narrator note>"}],\n'
     '    "max_simultaneous_mobjects": <int>\n'
     '  }]\n'
     '}\n\n'
 
     "══════════════════════════════════════════\n"
-    "WORKED EXAMPLE (topic: 'how a stack works')\n"
-    "Study beat density, narrator Wait lengths, and how beat sums match budgets:\n"
+    "WORKED EXAMPLE (topic: 'how a stack works') — ~202s total\n"
+    "Study beat density and narrator Wait lengths. Each scene's duration is the sum of "
+    "its beats — there is no separate budget field to match.\n"
     "══════════════════════════════════════════\n"
     + json.dumps(_WORKED_EXAMPLE, indent=2)
 )
@@ -312,8 +311,9 @@ def generate(
 
     user_msg = (
         f'Produce the animation plan for this topic: "{topic}"\n\n'
-        "Remember 3B1B style: quick animation beats (0.8–1.5s), narrator Wait beats (5–12s), "
-        "scenes 20–35s each, every scene flows into the next as one continuous video."
+        "3B1B style: quick animation beats (0.8–1.5s), narrator Wait beats (5–12s). "
+        "Aim for 20–35s per scene — judge this by summing your beat durations. "
+        "Scene duration comes from the beats; do not add a duration_budget_seconds field."
     )
 
     if previous_error and previous_plan:

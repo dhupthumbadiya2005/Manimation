@@ -104,9 +104,10 @@ def _run_topic(topic: str, run_id: str) -> None:
 
     scenes = plan["scenes"]
     target_dur = plan.get("target_duration_seconds", plan_schema.DEFAULT_TARGET_DURATION)
-    total_planned = sum(s.get("duration_budget_seconds", 0) for s in scenes)
+    # Scene duration is the sum of its beats — no separate budget field required
+    total_planned = sum(plan_schema.scene_beat_total(s) for s in scenes)
 
-    print(f"\nPlan: {len(scenes)} scenes | target {target_dur:.0f}s | budgeted {total_planned:.1f}s")
+    print(f"\nPlan: {len(scenes)} scenes | target {target_dur:.0f}s | beats total {total_planned:.1f}s")
     print(f"  Saved: {plan_path}\n")
 
     # 3. Render each scene through the unchanged Phase 1 retry loop
@@ -118,7 +119,7 @@ def _run_topic(topic: str, run_id: str) -> None:
         logger.info(f"Rendering scene {sid}/{len(scenes)}: {scene.get('goal', '')[:60]}")
         result = retry_loop.run(scene, scene_run_dir)
         result["scene_id"] = sid
-        result["planned_duration"] = scene.get("duration_budget_seconds", 0)
+        result["planned_duration"] = plan_schema.scene_beat_total(scene)
         scene_results.append(result)
 
     render_elapsed = time.time() - render_start
@@ -148,7 +149,7 @@ def _run_topic(topic: str, run_id: str) -> None:
         )
     print(f"{'─' * 64}")
     print(f"\nResults : {len(successes)}/{len(scenes)} scenes rendered successfully")
-    print(f"Timing  : planned {total_planned:.1f}s | actual {total_actual:.1f}s "
+    print(f"Timing  : beats planned {total_planned:.1f}s | mp4 actual {total_actual:.1f}s "
           f"(cap {plan_schema.MAX_TOTAL_DURATION_SECONDS}s)")
     print(f"Wall    : plan gen {gen_elapsed:.1f}s | render {render_elapsed:.1f}s "
           f"| total {wall_elapsed:.1f}s")
