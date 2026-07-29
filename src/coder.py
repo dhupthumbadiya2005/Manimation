@@ -1,9 +1,8 @@
 """LLM-based Manim code generator."""
 import json
 import os
-from pathlib import Path
 
-import anthropic
+import openai
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -56,8 +55,8 @@ IMPORTANT: LabeledNode does NOT exist in Manim. Use VGroup(Circle(), Text("label
 
 
 def generate(scene: dict, previous_error: str | None = None, previous_code: str | None = None) -> str:
-    """Call Claude to generate Manim Python code for the given scene JSON."""
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    """Call GPT-4o to generate Manim Python code for the given scene JSON."""
+    client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
     user_message = f"Generate a complete Manim Python file for this scene:\n\n{json.dumps(scene, indent=2)}"
 
@@ -75,14 +74,18 @@ Error / reason for failure:
 
 Write a complete, corrected Python file from scratch. Fix all issues. Do not output a diff or patch — output the entire file."""
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
+    system = SYSTEM_PROMPT.replace("<scene_id>", str(scene.get("scene_id", "N")))
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
         max_tokens=4096,
-        system=SYSTEM_PROMPT.replace("<scene_id>", str(scene.get("scene_id", "N"))),
-        messages=[{"role": "user", "content": user_message}],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
     )
 
-    code = response.content[0].text.strip()
+    code = response.choices[0].message.content.strip()
 
     # Strip markdown fences if the model added them despite instructions
     if code.startswith("```"):
