@@ -1,4 +1,5 @@
 """Subprocess Manim renderer with timeout and log capture."""
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -6,6 +7,8 @@ from pathlib import Path
 
 
 TIMEOUT_SECONDS = 90
+# LaTeX on macOS lives here (TeX Live / MacTeX); not on default subprocess PATH
+LATEX_BIN = "/Library/TeX/texbin"
 
 
 @dataclass
@@ -21,6 +24,10 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
     Run `manim -ql <code_path> <scene_class>`.
     Returns RenderResult; on success, mp4_path points to the rendered file.
     """
+    env = os.environ.copy()
+    if LATEX_BIN not in env.get("PATH", ""):
+        env["PATH"] = LATEX_BIN + ":" + env.get("PATH", "")
+
     try:
         proc = subprocess.run(
             ["manim", "-ql", code_path.name, scene_class],
@@ -28,6 +35,7 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
             text=True,
             timeout=TIMEOUT_SECONDS,
             cwd=str(code_path.parent),
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return RenderResult(
