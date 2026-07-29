@@ -23,7 +23,7 @@ def run(code_path: Path, scene_class: str, output_dir: Path) -> RenderResult:
     """
     try:
         proc = subprocess.run(
-            ["manim", "-ql", str(code_path), scene_class],
+            ["manim", "-ql", code_path.name, scene_class],
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
