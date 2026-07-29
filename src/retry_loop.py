@@ -1,18 +1,18 @@
-"""Orchestrates animator -> coder -> lint -> render with up to 3 total attempts."""
+"""Orchestrates coder -> lint -> render with up to 3 total attempts."""
 import json
 import shutil
 from pathlib import Path
 
 from loguru import logger
 
-from src import animator, coder, lint, renderer
+from src import coder, lint, renderer
 
 MAX_ATTEMPTS = 3
 
 
 def run(scene: dict, run_dir: Path) -> dict:
     """
-    Execute the animator-coder-lint-render loop for one scene.
+    Execute the coder-lint-render loop for one scene.
     All artifacts are written to run_dir.
     Returns a result dict (also written as result.json).
     """
@@ -21,24 +21,14 @@ def run(scene: dict, run_dir: Path) -> dict:
     scene_id = scene.get("scene_id", "unknown")
     scene_class = f"Scene{scene_id}"
 
-    # Generate the animation brief once — shared across all retry attempts.
-    # The brief is the concrete visual spec; retry attempts only fix the code.
-    logger.info(f"Scene {scene_id} — generating animation brief")
-    brief = animator.generate(scene)
-    brief_path = run_dir / "animation_brief.txt"
-    brief_path.write_text(brief)
-    logger.info(f"Brief saved -> {brief_path}")
-
     last_error: str | None = None
     last_code: str | None = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         logger.info(f"Scene {scene_id} — attempt {attempt}/{MAX_ATTEMPTS}")
 
-        # --- Generate code from the brief ---
         code = coder.generate(
             scene,
-            animation_brief=brief,
             previous_error=last_error,
             previous_code=last_code,
         )
@@ -48,19 +38,15 @@ def run(scene: dict, run_dir: Path) -> dict:
         code_path.write_text(code)
         logger.info(f"Saved code -> {code_path}")
 
-        # --- Lint ---
         lint_result = lint.check(code)
         if not lint_result.passed:
             msg = f"LINT FAILED: {lint_result.message}"
             logger.warning(msg)
-            # Write stub logs so every attempt has files
             (run_dir / f"attempt_{attempt}_stdout.log").write_text("")
             (run_dir / f"attempt_{attempt}_stderr.log").write_text(msg)
             last_error = msg
             continue
 
-        # --- Render ---
-        # Copy code into a temp work dir so Manim media/ lands there, not in runs/
         work_dir = run_dir / f"work_{attempt}"
         work_dir.mkdir(exist_ok=True)
         work_code = work_dir / f"{code_path.stem}.py"
@@ -80,7 +66,6 @@ def run(scene: dict, run_dir: Path) -> dict:
         last_error = render_result.stderr
         logger.warning(f"Render failed on attempt {attempt}:\n{last_error[-500:]}")
 
-    # All attempts exhausted
     logger.error(f"Scene {scene_id} failed after {MAX_ATTEMPTS} attempts")
     result = {"success": False, "attempts": MAX_ATTEMPTS, "final_error": last_error}
     (run_dir / "result.json").write_text(json.dumps(result, indent=2))

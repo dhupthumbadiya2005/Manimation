@@ -104,66 +104,54 @@ def _run_topic(topic: str, run_id: str) -> None:
 
     scenes = plan["scenes"]
     target_dur = plan.get("target_duration_seconds", plan_schema.DEFAULT_TARGET_DURATION)
-    # Scene duration is the sum of its beats — no separate budget field required
-    total_planned = sum(plan_schema.scene_beat_total(s) for s in scenes)
+    total_hint = sum(plan_schema.scene_duration_hint(s) for s in scenes)
 
-    print(f"\nPlan: {len(scenes)} scenes | target {target_dur:.0f}s | beats total {total_planned:.1f}s")
+    print(f"\nPlan: {len(scenes)} scenes | target {target_dur:.0f}s | hint total {total_hint:.0f}s")
     print(f"  Saved: {plan_path}\n")
 
-    # 3. Render each scene through the unchanged Phase 1 retry loop
+    # 3. Render each scene — inject topic so coder has full context
     scene_results: list[dict] = []
     render_start = time.time()
     for scene in scenes:
         sid = scene["scene_id"]
+        scene["_topic"] = topic  # pass topic through to coder without polluting plan.json
         scene_run_dir = run_dir / f"scene_{sid}"
-        logger.info(f"Rendering scene {sid}/{len(scenes)}: {scene.get('goal', '')[:60]}")
+        logger.info(f"Rendering scene {sid}/{len(scenes)}: {scene.get('title', '')[:60]}")
         result = retry_loop.run(scene, scene_run_dir)
         result["scene_id"] = sid
-        result["planned_duration"] = plan_schema.scene_beat_total(scene)
+        result["duration_hint"] = plan_schema.scene_duration_hint(scene)
         scene_results.append(result)
 
     render_elapsed = time.time() - render_start
     wall_elapsed = time.time() - wall_start
 
-    # 4. Collect per-scene actual durations
+    # 4. Report results
     total_actual = 0.0
     successes = [r for r in scene_results if r["success"]]
     failures = [r for r in scene_results if not r["success"]]
 
     print(f"\n{'─' * 64}")
-    print(f"{'Scene':<8} {'Goal':<38} {'Plan':>6} {'Actual':>7} {'Attempts':>9}")
+    print(f"{'Scene':<8} {'Title':<35} {'Hint':>6} {'Actual':>7} {'Attempts':>9}")
     print(f"{'─' * 64}")
     for r in scene_results:
         sid = r["scene_id"]
         scene = next(s for s in scenes if s["scene_id"] == sid)
-        goal_short = (scene.get("goal") or "")[:37]
-        planned = r["planned_duration"]
+        title_short = (scene.get("title") or "")[:34]
+        hint = r["duration_hint"]
         actual = 0.0
         if r["success"] and r.get("mp4"):
             actual = _video_duration(r["mp4"])
             total_actual += actual
         status = "✓" if r["success"] else "✗"
         print(
-            f"{status} {sid:<6} {goal_short:<38} "
-            f"{planned:>5.1f}s {actual:>6.1f}s {r['attempts']:>6}/{retry_loop.MAX_ATTEMPTS}"
+            f"{status} {sid:<6} {title_short:<35} "
+            f"{hint:>5.0f}s {actual:>6.1f}s {r['attempts']:>6}/{retry_loop.MAX_ATTEMPTS}"
         )
     print(f"{'─' * 64}")
     print(f"\nResults : {len(successes)}/{len(scenes)} scenes rendered successfully")
-    print(f"Timing  : beats planned {total_planned:.1f}s | mp4 actual {total_actual:.1f}s "
-          f"(cap {plan_schema.MAX_TOTAL_DURATION_SECONDS}s)")
+    print(f"Timing  : hint {total_hint:.0f}s | mp4 actual {total_actual:.1f}s")
     print(f"Wall    : plan gen {gen_elapsed:.1f}s | render {render_elapsed:.1f}s "
           f"| total {wall_elapsed:.1f}s")
-
-    # 5. Log comparison vs Phase 1 baseline (hand-written scenes)
-    p1_runs = Path("runs")
-    p1_scene_dirs = [d for d in p1_runs.glob("*/scene_*") if (d / "result.json").exists()
-                     and str(run_dir) not in str(d)]
-    if p1_scene_dirs:
-        p1_results = [json.loads((d / "result.json").read_text()) for d in p1_scene_dirs]
-        p1_rate = sum(1 for r in p1_results if r.get("success")) / len(p1_results)
-        p2_rate = len(successes) / len(scenes) if scenes else 0
-        print(f"\nSuccess rate — hand-written scenes: {p1_rate:.0%} "
-              f"| planner-generated: {p2_rate:.0%}")
 
     if failures:
         print(f"\nFailed scenes: {[r['scene_id'] for r in failures]}")

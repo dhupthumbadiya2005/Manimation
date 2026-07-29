@@ -1,304 +1,213 @@
-"""Planner agent: converts a topic string into a validated scene JSON array."""
+"""Planner agent: converts a topic into a list of scene descriptions for the coder."""
 import json
 import os
 
 import openai
 from dotenv import load_dotenv
 
-from src.plan_schema import DEFAULT_TARGET_DURATION, GRID_CELLS, MAX_TOTAL_DURATION_SECONDS
-
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# 3B1B-style worked example — topic: "how a stack works"
-#
-# Pacing model:
-#   • Animation beats (FadeIn/Create/Indicate): 0.8–1.5s — snappy, visual change
-#   • Narrator Wait beats: 5–12s — narrator explains while visual is held
-#   • Transition Wait beats: 1–3s — brief pause at a state change
-#   • FadeOut beats: 0.5–1.0s each
-#
-# Each scene's beat durations sum within ±20% of duration_budget_seconds.
-# Total budget 212s is within ±15% of target 240s: [204, 276].
-# ---------------------------------------------------------------------------
 _WORKED_EXAMPLE = {
-    "target_duration_seconds": 240,
+    "topic": "how a stack works",
+    "target_duration_seconds": 180,
     "scenes": [
         {
             "scene_id": 1,
-            "goal": "Hook: a growing browser history raises the question of how the Back button knows where you were",
-            "duration_budget_seconds": 24,
-            "mobjects": [
-                {"id": "tab1", "type": "Rectangle", "content": "browser tab labeled 'Home'", "cell": "top-left"},
-                {"id": "tab2", "type": "Rectangle", "content": "browser tab labeled 'Search'", "cell": "top-center"},
-                {"id": "tab3", "type": "Rectangle", "content": "browser tab labeled 'Article'", "cell": "top-right"},
-                {"id": "question", "type": "Text", "content": "How does Back know where you were?", "cell": "mid-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "tab1", "duration": 0.8, "note": "first page visited"},
-                {"action": "FadeIn", "target": "tab2", "duration": 0.8, "note": "second page"},
-                {"action": "FadeIn", "target": "tab3", "duration": 0.8, "note": "third page — history growing"},
-                {"action": "Wait", "target": "tab3", "duration": 10.0, "note": "narrator: you have visited three pages in order"},
-                {"action": "Indicate", "target": "tab3", "duration": 1.0, "note": "highlight the most recent tab"},
-                {"action": "Wait", "target": "tab3", "duration": 6.0, "note": "narrator: pressing Back returns to the previous page — how?"},
-                {"action": "FadeIn", "target": "question", "duration": 1.5, "note": "the central question appears"},
-                {"action": "Wait", "target": "question", "duration": 2.0, "note": "brief pause"},
-                {"action": "FadeOut", "target": "tab1", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "tab2", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "tab3", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "question", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
+            "title": "The Browser Back Button Mystery",
+            "duration_hint": 22,
+            "description": (
+                "Show three rounded rectangles side by side at the top of the screen, "
+                "labeled 'Home', 'Search', 'Article' — like browser tabs. "
+                "Below them, centered at mid-screen, fade in the text: "
+                "'How does Back know where you were?'\n\n"
+                "Animation: tabs appear one-by-one with LaggedStart (total 2s). "
+                "Question text writes in (1.5s). Hold 5s — narrator: 'You visit Home, "
+                "then Search, then Article. You press Back — you land on Search. "
+                "Press again — Home. The order is preserved perfectly. How?' "
+                "Flash/Indicate the 'Article' tab (the most recent). Hold 3s. "
+                "Fade all out (1s)."
+            ),
         },
         {
             "scene_id": 2,
-            "goal": "Introduce the stack: a vertical column of elements where only the top is accessible",
-            "duration_budget_seconds": 28,
-            "mobjects": [
-                {"id": "label", "type": "Text", "content": "Stack", "cell": "top-center"},
-                {"id": "box_a", "type": "Square", "content": "box labeled A at bottom of column", "cell": "bot-center"},
-                {"id": "box_b", "type": "Square", "content": "box labeled B stacked above A", "cell": "mid-center"},
-                {"id": "box_c", "type": "Square", "content": "box labeled C on top (last added)", "cell": "mid-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "label", "duration": 1.0, "note": "title"},
-                {"action": "Create", "target": "box_a", "duration": 0.8, "note": "A placed first"},
-                {"action": "Create", "target": "box_b", "duration": 0.8, "note": "B stacks on top of A"},
-                {"action": "Create", "target": "box_c", "duration": 0.8, "note": "C stacks on top of B"},
-                {"action": "Wait", "target": "box_c", "duration": 9.0, "note": "narrator: we added A first then B then C — C sits on top"},
-                {"action": "Indicate", "target": "box_c", "duration": 1.0, "note": "highlight the top"},
-                {"action": "Wait", "target": "box_c", "duration": 8.0, "note": "narrator: only the top element is accessible; A and B are buried underneath"},
-                {"action": "Indicate", "target": "box_a", "duration": 1.0, "note": "show A is buried"},
-                {"action": "Wait", "target": "box_a", "duration": 2.0, "note": "brief pause"},
-                {"action": "FadeOut", "target": "label", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "box_c", "duration": 0.5, "note": "clear top first"},
-                {"action": "FadeOut", "target": "box_b", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "box_a", "duration": 0.8, "note": "clear bottom"},
-            ],
-            "max_simultaneous_mobjects": 4,
+            "title": "The Stack: Last In, First Out",
+            "duration_hint": 30,
+            "description": (
+                "Visualize a stack as a vertical column of colored rectangles, "
+                "width=2.0, height=0.9 each, centered at x=0, growing upward "
+                "from y=-2.5. Label each box inside with its value.\n\n"
+                "Title 'Stack' appears at top-center (scale 1.4).\n\n"
+                "Animation — Push three items:\n"
+                "1. Box 'A' (BLUE) slides in from below and lands at y=-2.5 (0.8s).\n"
+                "2. Box 'B' (GREEN) slides in and lands on top of A at y=-1.4 (0.8s).\n"
+                "3. Box 'C' (YELLOW) slides in and lands on top of B at y=-0.3 (0.8s).\n"
+                "Hold 4s — narrator: 'We added A first, then B, then C. "
+                "C sits on top.'\n"
+                "Indicate box C with a pulse (0.8s). "
+                "Hold 5s — narrator: 'Only the TOP element is accessible right now. "
+                "A and B are buried. This is a stack — a last-in, first-out structure.'\n"
+                "Indicate box A (show it's buried). Hold 3s.\n"
+                "Fade all out (1s)."
+            ),
         },
         {
             "scene_id": 3,
-            "goal": "Animate the Push operation: a new element descends from above and lands on the stack top",
-            "duration_budget_seconds": 28,
-            "mobjects": [
-                {"id": "op_label", "type": "Text", "content": "Push", "cell": "top-center"},
-                {"id": "stack_base", "type": "VGroup", "content": "two stacked boxes labeled 1 and 2", "cell": "mid-center"},
-                {"id": "incoming", "type": "Square", "content": "new box labeled 3 above the stack", "cell": "top-right"},
-                {"id": "arrow", "type": "Arrow", "content": "downward arrow pointing from box 3 toward the stack top", "cell": "mid-right"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "op_label", "duration": 1.0, "note": "operation name"},
-                {"action": "Create", "target": "stack_base", "duration": 1.5, "note": "existing two-element stack"},
-                {"action": "Wait", "target": "stack_base", "duration": 5.0, "note": "narrator: here is our stack with two elements already in it"},
-                {"action": "FadeIn", "target": "incoming", "duration": 1.0, "note": "new element appears above"},
-                {"action": "FadeIn", "target": "arrow", "duration": 0.8, "note": "arrow shows it is heading to the top"},
-                {"action": "Wait", "target": "incoming", "duration": 12.0, "note": "narrator: push places the new element on top — the stack now has three elements"},
-                {"action": "Indicate", "target": "incoming", "duration": 1.0, "note": "pulse the new top element"},
-                {"action": "Wait", "target": "incoming", "duration": 2.0, "note": "brief pause"},
-                {"action": "FadeOut", "target": "arrow", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "op_label", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "incoming", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "stack_base", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
+            "title": "Push: Adding to the Stack",
+            "duration_hint": 28,
+            "description": (
+                "Show an existing two-box stack (box '1' at bottom y=-1.5, "
+                "box '2' on top at y=-0.3, both WHITE rectangles width=2, height=0.9).\n"
+                "Title 'Push' at top-center in YELLOW.\n\n"
+                "A new box labeled '3' (color BLUE) appears above the screen top "
+                "and slides DOWN to land on top of box '2' at y=0.9 (1.5s, with a "
+                "slight bounce or deceleration easing).\n\n"
+                "Hold 3s — narrator: 'Push places a new element on top. "
+                "The stack now has three items.'\n"
+                "Indicate box '3' (the new top) with a yellow flash (0.8s).\n"
+                "Hold 5s — narrator: 'Push is O(1) — it always adds to the same spot, "
+                "the top, no matter how large the stack is.'\n"
+                "Fade all out (1s)."
+            ),
         },
         {
             "scene_id": 4,
-            "goal": "Animate the Pop operation: the top element lifts off and is returned, revealing the element below",
-            "duration_budget_seconds": 28,
-            "mobjects": [
-                {"id": "op_label", "type": "Text", "content": "Pop", "cell": "top-center"},
-                {"id": "stack_three", "type": "VGroup", "content": "three stacked boxes labeled 1 2 3 with 3 on top", "cell": "mid-center"},
-                {"id": "popped", "type": "Square", "content": "box 3 floating upward away from the stack", "cell": "top-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "op_label", "duration": 1.0, "note": "operation name"},
-                {"action": "Create", "target": "stack_three", "duration": 1.5, "note": "three-element stack"},
-                {"action": "Wait", "target": "stack_three", "duration": 5.0, "note": "narrator: we have three elements — we are going to pop"},
-                {"action": "Indicate", "target": "stack_three", "duration": 1.0, "note": "highlight the top"},
-                {"action": "Wait", "target": "stack_three", "duration": 3.0, "note": "brief pause before the pop"},
-                {"action": "FadeIn", "target": "popped", "duration": 0.8, "note": "top element rises"},
-                {"action": "Wait", "target": "popped", "duration": 10.0, "note": "narrator: pop removes the top element and returns its value — the stack now has two elements"},
-                {"action": "Indicate", "target": "popped", "duration": 1.0, "note": "the returned value"},
-                {"action": "Wait", "target": "popped", "duration": 2.0, "note": "brief pause"},
-                {"action": "FadeOut", "target": "popped", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "op_label", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "stack_three", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 3,
+            "title": "Pop: Removing from the Stack",
+            "duration_hint": 28,
+            "description": (
+                "Show a three-box stack: box '1' (y=-1.5), '2' (y=-0.3), '3' (y=0.9), "
+                "all WHITE rectangles width=2, height=0.9.\n"
+                "Title 'Pop' at top-center in RED.\n\n"
+                "Indicate box '3' (top). Hold 2s.\n"
+                "Animate box '3' sliding UP and off the screen (1.2s, ease in). "
+                "Simultaneously show a Text 'returns: 3' in GREEN appearing at top-right.\n\n"
+                "Hold 4s — narrator: 'Pop removes the top element and returns it. "
+                "The stack now has two items again.'\n"
+                "Fade 'returns: 3' out. Hold 5s — narrator: 'Pop is also O(1) — "
+                "always removes from the same spot.'\n"
+                "Indicate box '2' (new top). Hold 3s. Fade all out (1s)."
+            ),
         },
         {
             "scene_id": 5,
-            "goal": "Demonstrate LIFO: push A B C then pop returns C B A — the reversal is the core insight",
-            "duration_budget_seconds": 26,
-            "mobjects": [
-                {"id": "push_label", "type": "Text", "content": "Push A, B, C  →  Pop returns C, B, A", "cell": "top-center"},
-                {"id": "box_a", "type": "Square", "content": "box labeled A at bottom", "cell": "bot-center"},
-                {"id": "box_b", "type": "Square", "content": "box labeled B above A", "cell": "mid-center"},
-                {"id": "box_c", "type": "Square", "content": "box labeled C on top", "cell": "mid-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "push_label", "duration": 1.0, "note": "caption appears"},
-                {"action": "Create", "target": "box_a", "duration": 0.8, "note": "push A"},
-                {"action": "Create", "target": "box_b", "duration": 0.8, "note": "push B"},
-                {"action": "Create", "target": "box_c", "duration": 0.8, "note": "push C — on top"},
-                {"action": "Wait", "target": "box_c", "duration": 5.0, "note": "narrator: we pushed A then B then C"},
-                {"action": "FadeOut", "target": "box_c", "duration": 0.8, "note": "pop C — first out"},
-                {"action": "Wait", "target": "box_b", "duration": 2.0, "note": "C came off first"},
-                {"action": "FadeOut", "target": "box_b", "duration": 0.8, "note": "pop B"},
-                {"action": "Wait", "target": "box_a", "duration": 2.0, "note": "B came off second"},
-                {"action": "FadeOut", "target": "box_a", "duration": 0.8, "note": "pop A — last out"},
-                {"action": "Wait", "target": "push_label", "duration": 8.0, "note": "narrator: last in first out — LIFO — the insertion order is exactly reversed on removal"},
-                {"action": "FadeOut", "target": "push_label", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
+            "title": "LIFO Demonstrated",
+            "duration_hint": 30,
+            "description": (
+                "Show two columns side by side.\n"
+                "Left column header: 'Push order' (top-left, scale 0.9)\n"
+                "Right column header: 'Pop order' (top-right, scale 0.9)\n\n"
+                "Left side: animate boxes A (BLUE), B (GREEN), C (YELLOW) "
+                "appearing bottom-to-top as a stack (0.7s each, LaggedStart).\n\n"
+                "Hold 3s — narrator: 'We pushed A, then B, then C.'\n\n"
+                "Right side: pop animation — C lifts off the left stack and "
+                "lands in the right column at the bottom (move + slight arc, 1s). "
+                "Then B (1s). Then A (1s). Each lands one above the other.\n\n"
+                "Hold 4s — narrator: 'We get them back in reverse order: C, B, A. "
+                "Last In, First Out — LIFO. The insertion order is exactly reversed.'\n\n"
+                "Show a big label 'LIFO' centered between the columns (FadeIn, scale 1.5).\n"
+                "Hold 4s. Fade all out (1s)."
+            ),
         },
         {
             "scene_id": 6,
-            "goal": "Show the call stack: each function call pushes a frame, each return pops one",
-            "duration_budget_seconds": 28,
-            "mobjects": [
-                {"id": "heading", "type": "Text", "content": "The Call Stack", "cell": "top-center"},
-                {"id": "frame_main", "type": "Rectangle", "content": "stack frame labeled main()", "cell": "bot-center"},
-                {"id": "frame_foo", "type": "Rectangle", "content": "stack frame labeled foo()", "cell": "mid-center"},
-                {"id": "frame_bar", "type": "Rectangle", "content": "stack frame labeled bar()", "cell": "mid-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "heading", "duration": 1.0, "note": "heading"},
-                {"action": "Create", "target": "frame_main", "duration": 1.0, "note": "main() starts: frame pushed"},
-                {"action": "Wait", "target": "frame_main", "duration": 4.0, "note": "narrator: main is the entry point — its frame sits at the bottom"},
-                {"action": "Create", "target": "frame_foo", "duration": 1.0, "note": "main calls foo(): frame pushed"},
-                {"action": "Wait", "target": "frame_foo", "duration": 4.0, "note": "narrator: every function call pushes a new frame on top"},
-                {"action": "Create", "target": "frame_bar", "duration": 1.0, "note": "foo calls bar(): frame pushed"},
-                {"action": "Wait", "target": "frame_bar", "duration": 3.0, "note": "three frames deep"},
-                {"action": "FadeOut", "target": "frame_bar", "duration": 0.8, "note": "bar() returns — frame popped"},
-                {"action": "Wait", "target": "frame_foo", "duration": 3.0, "note": "control returns to foo"},
-                {"action": "FadeOut", "target": "frame_foo", "duration": 0.8, "note": "foo() returns — frame popped"},
-                {"action": "Wait", "target": "frame_main", "duration": 3.0, "note": "control returns to main"},
-                {"action": "FadeOut", "target": "frame_main", "duration": 0.8, "note": "main returns — stack empty"},
-                {"action": "FadeOut", "target": "heading", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
-        },
-        {
-            "scene_id": 7,
-            "goal": "Stack overflow: unbounded recursion fills the stack until the program crashes",
-            "duration_budget_seconds": 26,
-            "mobjects": [
-                {"id": "heading", "type": "Text", "content": "Stack Overflow", "cell": "top-center"},
-                {"id": "frame1", "type": "Rectangle", "content": "recursive frame 1 at bottom", "cell": "bot-center"},
-                {"id": "frame2", "type": "Rectangle", "content": "recursive frame 2", "cell": "bot-center"},
-                {"id": "frame3", "type": "Rectangle", "content": "recursive frame 3 near top", "cell": "mid-center"},
-                {"id": "error_msg", "type": "Text", "content": "StackOverflowError", "cell": "mid-center"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "heading", "duration": 1.0, "note": "heading"},
-                {"action": "Create", "target": "frame1", "duration": 0.8, "note": "first recursive call"},
-                {"action": "Create", "target": "frame2", "duration": 0.8, "note": "second — recursion continues"},
-                {"action": "Create", "target": "frame3", "duration": 0.8, "note": "third — stack keeps growing"},
-                {"action": "Wait", "target": "frame3", "duration": 4.0, "note": "narrator: with unbounded recursion frames pile up"},
-                {"action": "Indicate", "target": "frame3", "duration": 1.0, "note": "highlight the growing top"},
-                {"action": "Wait", "target": "frame3", "duration": 6.0, "note": "narrator: the stack has a finite size — eventually it is full"},
-                {"action": "FadeOut", "target": "heading", "duration": 0.8, "note": "clear heading to make room"},
-                {"action": "FadeIn", "target": "error_msg", "duration": 1.0, "note": "crash — error appears where heading was"},
-                {"action": "Wait", "target": "error_msg", "duration": 5.0, "note": "narrator: the next push has nowhere to go — StackOverflowError"},
-                {"action": "FadeOut", "target": "error_msg", "duration": 0.8, "note": "clear"},
-                {"action": "FadeOut", "target": "frame3", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "frame2", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "frame1", "duration": 0.5, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
-        },
-        {
-            "scene_id": 8,
-            "goal": "Three real-world uses: browser back button, Ctrl+Z undo, and parentheses matching",
-            "duration_budget_seconds": 24,
-            "mobjects": [
-                {"id": "heading", "type": "Text", "content": "Stacks are Everywhere", "cell": "top-center"},
-                {"id": "use1", "type": "Text", "content": "Browser back button", "cell": "mid-left"},
-                {"id": "use2", "type": "Text", "content": "Ctrl+Z undo", "cell": "mid-center"},
-                {"id": "use3", "type": "Text", "content": "Parentheses matching", "cell": "mid-right"},
-            ],
-            "beats": [
-                {"action": "FadeIn", "target": "heading", "duration": 1.0, "note": "heading"},
-                {"action": "FadeIn", "target": "use1", "duration": 1.0, "note": "use 1"},
-                {"action": "Wait", "target": "use1", "duration": 5.0, "note": "narrator: every page you visit is pushed — Back pops it"},
-                {"action": "FadeIn", "target": "use2", "duration": 1.0, "note": "use 2"},
-                {"action": "Wait", "target": "use2", "duration": 5.0, "note": "narrator: every action is pushed — Ctrl+Z pops the last one"},
-                {"action": "FadeIn", "target": "use3", "duration": 1.0, "note": "use 3"},
-                {"action": "Wait", "target": "use3", "duration": 6.0, "note": "narrator: open brackets are pushed — a close bracket pops and checks for a match"},
-                {"action": "FadeOut", "target": "use1", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "use2", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "use3", "duration": 0.5, "note": "clear"},
-                {"action": "FadeOut", "target": "heading", "duration": 1.0, "note": "clear"},
-            ],
-            "max_simultaneous_mobjects": 4,
+            "title": "The Call Stack in Programs",
+            "duration_hint": 32,
+            "description": (
+                "Visualize a program's call stack as a vertical column of rectangles "
+                "(width=3.5, height=0.85) labeled with function names, centered at x=0, "
+                "growing upward from y=-2.8.\n"
+                "Title 'The Call Stack' at top-center.\n\n"
+                "On the left of each frame, show a small arrow ← pointing to code.\n\n"
+                "Animation sequence:\n"
+                "1. Frame 'main()' (WHITE) slides up from bottom, lands at y=-2.8 (0.8s).\n"
+                "   Hold 3s — narrator: 'When a program starts, main() is pushed.'\n"
+                "2. Frame 'foo()' (BLUE) slides up, lands at y=-1.7 (0.8s).\n"
+                "   Hold 3s — narrator: 'main calls foo — new frame pushed on top.'\n"
+                "3. Frame 'bar()' (GREEN) slides up, lands at y=-0.6 (0.8s).\n"
+                "   Hold 3s — narrator: 'foo calls bar — another frame.'\n"
+                "4. bar() frame slides off upward (0.8s). Text 'bar() returns' in GREY appears briefly.\n"
+                "   Hold 2s — narrator: 'bar finishes — its frame is popped.'\n"
+                "5. foo() frame slides off (0.8s). 'foo() returns' in GREY.\n"
+                "   Hold 2s — narrator: 'foo finishes — frame popped.'\n"
+                "6. main() frame slides off (0.8s). 'main() returns' in GREY.\n"
+                "   Hold 3s — narrator: 'Program done — stack is empty.'\n"
+                "Fade all out (1s)."
+            ),
         },
     ],
 }
 
-# Beat sums: S1=25.4  S2=27.0  S3=27.4  S4=27.9  S5=23.8  S6=24.4  S7=23.5  S8=22.5
-# Total: 201.9s ≤ 300s hard cap ✓
+_SYSTEM_PROMPT = """You are the director of a 3Blue1Brown-style educational animation. \
+Your job is to plan a multi-scene video on the given topic.
 
-_SYSTEM_PROMPT = (
-    "You are the director of a 3Blue1Brown-style educational video. "
-    "Produce a JSON animation plan — nothing else. Output ONLY the JSON object. "
-    "No prose, no markdown, no code fences.\n\n"
+Output ONLY a JSON object — no markdown, no prose, no code fences.
 
-    "══════════════════════════════════════════\n"
-    "3BLUE1BROWN DIRECTING PRINCIPLES\n"
-    "══════════════════════════════════════════\n"
-    "• Scenes are SHOTS in one continuous video — each flows naturally into the next.\n"
-    "• Every scene delivers exactly one insight, statable in one sentence.\n"
-    "• SCENE DURATION comes entirely from beat durations — write beats that feel right "
-    "for the content, and the scene length emerges naturally. Do NOT pad beats to hit "
-    "a target; do NOT under-write beats and leave empty time.\n"
-    "• Animation beats (FadeIn/Create/Write/Indicate): 0.8–1.5s — snappy visual changes.\n"
-    "• Narrator Wait beats: 5–12s — narrator speaks while visual is held. Each Wait's "
-    "note should describe what the narrator says during that pause.\n"
-    "• Transition pauses: 1–3s — brief beat between visual state changes.\n"
-    "• The LAST beats of every scene must FadeOut ALL mobjects introduced in that scene.\n"
-    "• Aim for 20–35s per scene (judge by summing your beat durations before writing).\n"
-    "• No standalone title-card scenes. Dive into content from scene 1.\n"
-    "• Build concepts scene by scene — each adds one new idea.\n\n"
+════════════════════════════════════════
+OUTPUT FORMAT
+════════════════════════════════════════
+{
+  "topic": "<topic string>",
+  "target_duration_seconds": <total video length in seconds, 120–300>,
+  "scenes": [
+    {
+      "scene_id": <int, starting at 1>,
+      "title": "<short scene title>",
+      "duration_hint": <expected seconds for this scene, 20–45>,
+      "description": "<rich natural-language description — see below>"
+    }
+  ]
+}
 
-    "══════════════════════════════════════════\n"
-    "HARD RULES\n"
-    "══════════════════════════════════════════\n"
-    "1. Total beats across ALL scenes must not exceed "
-    + str(MAX_TOTAL_DURATION_SECONDS)
-    + "s. Aim for around "
-    + str(int(DEFAULT_TARGET_DURATION))
-    + "s.\n"
-    "2. All cell values must be from: " + str(GRID_CELLS) + "\n"
-    "3. Every non-Wait beat's target must be a mobject id defined in that scene.\n"
-    "4. At most max_simultaneous_mobjects mobjects on screen at once (track this yourself).\n"
-    "5. scene_id starts at 1 and increments by 1 with no gaps.\n"
-    "6. Describe mobjects as WHAT to show, not how to code them.\n\n"
+════════════════════════════════════════
+HOW TO WRITE A SCENE DESCRIPTION
+════════════════════════════════════════
+The description is instructions to a Manim programmer. Be SPECIFIC — they cannot \
+read your mind. Include:
 
-    "══════════════════════════════════════════\n"
-    "SCHEMA\n"
-    "══════════════════════════════════════════\n"
-    '{\n'
-    '  "target_duration_seconds": <float — your total video target, ≤300>,\n'
-    '  "scenes": [{\n'
-    '    "scene_id": <int>,\n'
-    '    "goal": "<one sentence — what insight does this scene deliver?>",\n'
-    '    "mobjects": [{"id":"<str>","type":"<str>","content":"<description>","cell":"<grid cell>"}],\n'
-    '    "beats": [{"action":"<FadeIn|Create|Write|Indicate|FadeOut|Wait|…>",\n'
-    '               "target":"<mobject id>","duration":<float>,"note":"<narrator note>"}],\n'
-    '    "max_simultaneous_mobjects": <int>\n'
-    '  }]\n'
-    '}\n\n'
+1. VISUAL LAYOUT: what objects appear, where, what size, what color.
+   - For arrays: list the exact values. e.g. "[2, 7, 1, 8, 3, 5]"
+   - For trees/graphs: specify nodes and edges explicitly.
+   - For text: write the exact string content.
+   - Positions: use terms like "centered", "top-left quadrant", "below the array".
 
-    "══════════════════════════════════════════\n"
-    "WORKED EXAMPLE (topic: 'how a stack works') — ~202s total\n"
-    "Study beat density and narrator Wait lengths. Each scene's duration is the sum of "
-    "its beats — there is no separate budget field to match.\n"
-    "══════════════════════════════════════════\n"
-    + json.dumps(_WORKED_EXAMPLE, indent=2)
-)
+2. ANIMATION SEQUENCE: numbered steps, in order, with timing hints.
+   - e.g. "1. Array boxes appear one-by-one LaggedStart (2s total)"
+   - e.g. "2. Yellow arrow pointer appears above index 4 (0.5s)"
+   - e.g. "3. Pointer moves from index 4 to index 7 — animate with .animate.next_to() (0.7s)"
+   - e.g. "4. Boxes 0–4 fade to GREY to show they're eliminated (0.6s)"
+
+3. NARRATOR MOMENTS: where to hold and for how long. Be generous — viewers need
+   time to read and absorb. Key narration holds should be 5–10s, not 2–3s.
+   - e.g. "Hold 6s — narrator: 'The pointer starts at the middle of the array...'"
+   - e.g. "Hold 8s — narrator: 'Since 9 is less than 11, everything to the left is eliminated...'"
+
+4. KEY VISUAL EFFECTS: what to flash/highlight/circumscribe at dramatic moments.
+   - e.g. "Flash the found element in GREEN (0.8s)"
+   - e.g. "Circumscribe the minimum value with a yellow rectangle"
+
+5. SCENE CLOSE: fade out all elements (1s).
+
+For ALGORITHM scenes: specify the data, describe each algorithmic step as an \
+animation. The coder will implement the algorithm in Python and animate each step. \
+Do NOT just say "show binary search" — describe WHAT CHANGES at each step.
+
+════════════════════════════════════════
+3B1B STYLE PRINCIPLES
+════════════════════════════════════════
+• Every scene delivers exactly ONE insight.
+• Show the algorithm running, not just the result. Moving pointers, colors changing, \
+  elements being eliminated — these are what make it educational.
+• Use YELLOW for highlights, GREEN for success, RED for failure/elimination, \
+  GREY for de-emphasized elements, BLUE/WHITE for neutral elements.
+• Avoid long static holds — even during narration, something subtle should move \
+  or be highlighted to maintain visual interest.
+• No standalone title-card scene. Scene 1 should already show the core concept.
+• Total 5–8 scenes. Each 20–45s. Total 120–300s.
+
+════════════════════════════════════════
+WORKED EXAMPLE — topic: "how a stack works"
+Study how each description specifies exact values, positions, colors, and animation steps.
+════════════════════════════════════════
+""" + json.dumps(_WORKED_EXAMPLE, indent=2)
 
 
 def generate(
@@ -306,23 +215,23 @@ def generate(
     previous_error: str | None = None,
     previous_plan: dict | None = None,
 ) -> dict:
-    """Call GPT-4o to produce a plan dict. On retry, appends error + prior plan."""
+    """Call GPT-4o to produce a scene plan. On retry, appends error + prior plan."""
     client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
     user_msg = (
-        f'Produce the animation plan for this topic: "{topic}"\n\n'
-        "3B1B style: quick animation beats (0.8–1.5s), narrator Wait beats (5–12s). "
-        "Aim for 20–35s per scene — judge this by summing your beat durations. "
-        "Scene duration comes from the beats; do not add a duration_budget_seconds field."
+        f'Plan a 3Blue1Brown-style educational video on: "{topic}"\n\n'
+        "Write 5–8 scenes. Each description must specify exact data values, "
+        "positions, colors, and numbered animation steps so a Manim programmer "
+        "can implement it without guessing. Output JSON only."
     )
 
     if previous_error and previous_plan:
         user_msg += (
-            "\n\nYour previous plan FAILED validation:\n\n"
+            "\n\nYour previous plan failed validation:\n\n"
             + json.dumps(previous_plan, indent=2)
-            + "\n\nValidation error:\n"
+            + "\n\nError:\n"
             + previous_error
-            + "\n\nOutput a fully corrected JSON object from scratch. JSON only."
+            + "\n\nOutput a fully corrected JSON object. JSON only."
         )
 
     response = client.chat.completions.create(
