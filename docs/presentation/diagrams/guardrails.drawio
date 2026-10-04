@@ -1,0 +1,38 @@
+<mxfile host="drawio">
+  <diagram id="guardrails" name="Accuracy guardrails">
+    <mxGraphModel dx="1200" dy="600" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1200" pageHeight="330" background="#FFFFFF" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="in" value="AI-written&lt;br&gt;scene code" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3F4F6;strokeColor=#9CA3AF;fontFamily=Helvetica;fontSize=16;fontColor=#1F2937;" vertex="1" parent="1">
+          <mxGeometry x="20" y="70" width="140" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="g1" value="&lt;b&gt;Prevent&lt;/b&gt;&lt;br&gt;&lt;br&gt;Themed toolkit, layout zones, 18 tested examples, real function signatures" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=22;fillColor=#E3F0FA;strokeColor=#1F6FA8;fontFamily=Helvetica;fontSize=15;fontColor=#1F2937;spacingLeft=22;spacingRight=14;" vertex="1" parent="1">
+          <mxGeometry x="190" y="40" width="230" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="g2" value="&lt;b&gt;Catch early&lt;/b&gt;&lt;br&gt;&lt;br&gt;Validator in milliseconds: unknown names, unsafe imports, wrong library version — common ones auto-fixed" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=22;fillColor=#E8F5E9;strokeColor=#2E7D32;fontFamily=Helvetica;fontSize=15;fontColor=#1F2937;spacingLeft=22;spacingRight=14;" vertex="1" parent="1">
+          <mxGeometry x="410" y="40" width="250" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="g3" value="&lt;b&gt;Check the picture&lt;/b&gt;&lt;br&gt;&lt;br&gt;Render + layout log: text off-screen, overlapping or too small" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=22;fillColor=#E8F5E9;strokeColor=#2E7D32;fontFamily=Helvetica;fontSize=15;fontColor=#1F2937;spacingLeft=22;spacingRight=14;" vertex="1" parent="1">
+          <mxGeometry x="650" y="40" width="230" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="g4" value="&lt;b&gt;Repair&lt;/b&gt;&lt;br&gt;&lt;br&gt;Fixer edits only the broken lines, then re-checks" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=22;fillColor=#E3F0FA;strokeColor=#1F6FA8;fontFamily=Helvetica;fontSize=15;fontColor=#1F2937;spacingLeft=22;spacingRight=14;" vertex="1" parent="1">
+          <mxGeometry x="870" y="40" width="210" height="150" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out" value="Working&lt;br&gt;scene" style="ellipse;whiteSpace=wrap;html=1;fillColor=#2E7D32;strokeColor=#2E7D32;fontFamily=Helvetica;fontSize=16;fontColor=#FFFFFF;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="70" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="ei" style="endArrow=block;endFill=1;html=1;strokeColor=#6B7280;strokeWidth=2;" edge="1" parent="1" source="in" target="g1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="eo" style="endArrow=block;endFill=1;html=1;strokeColor=#6B7280;strokeWidth=2;" edge="1" parent="1" source="g4" target="out"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="cost1" value="AI cost: none" style="text;html=1;align=center;fontFamily=Helvetica;fontSize=14;fontColor=#2E7D32;fontStyle=2;" vertex="1" parent="1"><mxGeometry x="190" y="200" width="230" height="24" as="geometry" /></mxCell>
+        <mxCell id="cost2" value="AI cost: none" style="text;html=1;align=center;fontFamily=Helvetica;fontSize=14;fontColor=#2E7D32;fontStyle=2;" vertex="1" parent="1"><mxGeometry x="410" y="200" width="250" height="24" as="geometry" /></mxCell>
+        <mxCell id="cost3" value="AI cost: none" style="text;html=1;align=center;fontFamily=Helvetica;fontSize=14;fontColor=#2E7D32;fontStyle=2;" vertex="1" parent="1"><mxGeometry x="650" y="200" width="230" height="24" as="geometry" /></mxCell>
+        <mxCell id="cost4" value="only when needed (~$0.015)" style="text;html=1;align=center;fontFamily=Helvetica;fontSize=14;fontColor=#1F6FA8;fontStyle=2;" vertex="1" parent="1"><mxGeometry x="870" y="200" width="210" height="24" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
