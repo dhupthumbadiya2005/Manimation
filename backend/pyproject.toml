@@ -1,0 +1,27 @@
+[project]
+name = "manimation-backend"
+version = "0.1.0"
+description = "MANImation Studio — prompt to 3Blue1Brown-style Manim videos"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "manim>=0.19",
+    "manim-voiceover[gtts]>=0.3.7",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "anthropic>=0.70",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["render: renders real Manim scenes (slow, needs cairo/ffmpeg/LaTeX)"]
+
+[tool.uv]
+package = false
